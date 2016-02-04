@@ -88,7 +88,9 @@ automatically passed through bsxfun, e.g.
 
 ## Chaining: any method that returns an image stack can be chained, e.g.
 ```matlab
-  s.everyNthFrame(50).normalize.montage
+  load mri
+  s = ImageStack(D);
+  s.everyNthFrame(2).frames(1:12).normalize.montage()
 ```
 
 ![montage](https://raw.githubusercontent.com/djoshea/matlab-imagestack/master/montage.png)
