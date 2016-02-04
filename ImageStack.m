@@ -74,7 +74,11 @@ classdef ImageStack
     
     methods
         function s = ImageStack(data, varargin)
-            s.data = data;
+            if ~isfloat(data)
+                s.data = single(data);
+            else
+                s.data = data;
+            end
             
             p = inputParser();
             p.addParameter('name', '', @ischar);
@@ -115,19 +119,19 @@ classdef ImageStack
             m = max(s.data, varargin{:});
         end
         
-        function mean(s, varargin)
+        function m = mean(s, varargin)
             m = mean(s.data, varargin{:});
         end
 
-        function nanmean(s, varargin)
+        function m = nanmean(s, varargin)
             m = nanmean(s.data, varargin{:});
         end
         
-        function var(s, varargin)
+        function m = var(s, varargin)
             m = var(s.data, varargin{:});
         end
         
-        function nanvar(s, varargin)
+        function m = nanvar(s, varargin)
             m = nanvar(s.data, varargin{:});
         end
         
@@ -441,7 +445,10 @@ classdef ImageStack
                 else
                     img = imread(file);
                 end
-                stack(:, :, :, i) = single(img);
+                if ~isfloat(data)
+                	img = single(img);
+                end
+                stack(:, :, :, i) = img;
             end
             prog.finish();
             
@@ -484,7 +491,10 @@ classdef ImageStack
                 else
                     img = imread(imgFile, i, 'Info', info);
                 end
-                stack(:, :, :, i) = single(img);
+                if ~isfloat(img)
+                    img = single(img);
+                end
+                stack(:, :, :, i) = img;
             end
             prog.finish();
             
