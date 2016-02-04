@@ -90,3 +90,5 @@ automatically passed through bsxfun, e.g.
 ```matlab
   s.everyNthFrame(50).normalize.montage
 ```
+
+[[https://raw.githubusercontent.com/djoshea/matlab-imagestack/master/montage.png|alt=montage]
