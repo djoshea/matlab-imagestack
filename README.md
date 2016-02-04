@@ -90,7 +90,8 @@ automatically passed through bsxfun, e.g.
 ```matlab
   load mri
   s = ImageStack(D);
-  s.everyNthFrame(2).frames(1:12).normalize.montage()
+  s.everyNthFrame(2).frames(1:12).normalize.montage();
+  colormap gray;
 ```
 
 ![montage](https://raw.githubusercontent.com/djoshea/matlab-imagestack/master/montage.png)
