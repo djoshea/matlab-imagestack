@@ -3,8 +3,7 @@ Lightweight Matlas class which wraps multichannel ImageStacks
 
 # Wrapper around a 4-D tensor of image data:
 
-Image data tensor is X by Y by channels by frames
-2015 Dan O'Shea
+Image data tensor is X by Y by channels by frames.
 
 ## Properties
 
