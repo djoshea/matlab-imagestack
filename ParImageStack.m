@@ -191,14 +191,14 @@ classdef ParImageStack
             prog.enableParallel();
             data = s.data;
             nFrames = size(data, 4);
-            ffRef = fft2(reference);
+           % ffRef = fft2(reference);
             shifts = nan(nFrames, 2);
             parfor i = 1:nFrames
                 %[out, freg] = ParImageStackTools.dftregistration(fft2(data(:, :, :, i)), ffRef, 4);
                 %shifts(i, :) = out(3:4);
                 %data(:, :, :, i) = abs(ifft2(freg));
                 data(:, :, :, i) = imregister(data(:, :, :, i), reference, 'translation', optimizer, metric);
-                prog.update(i);
+                prog.update(i); %#ok<PFBNS>
             end
             s.data = data;
             prog.finish();
@@ -222,6 +222,38 @@ classdef ParImageStack
                 error('Unknown argument type %s', class(o));
             end
         end
+        
+        function s = globalLinearDetrend(s)
+%             nX = size(s.data, 1);
+%             nY = size(s.data, 2);
+%             nC = size(s.data, 3);
+
+            gm = s.vsTime();
+            gmDetrend = detrend(squeeze(gm));
+            residual = gm - gmDetrend;
+            s = s - shiftdim(residual, -3);
+        end
+    end
+    
+    
+    methods % Filtering
+        
+        function s = smoothGaussian2(s, sigmaXY)
+            for c = 1:s.nChannels
+                for f = 1:s.nFrames
+                    s.data(:, :, c, f) = imgaussfilt(s.data(:, :, c, f), sigmaXY);
+                end
+            end
+        end
+        
+        function s = smoothGaussian3(s, sigmaXYZ)
+            for c = 1:s.nChannels
+                cdata = squeeze(s.data(:, :, c, :));
+            	cdata = imgaussfilt3(cdata, sigmaXYZ);
+                s.data(:, :, c, :) = reshape(cdata, size(s.data(:, :, c, :)));
+            end
+        end
+        
     end
     
     methods(Static)
@@ -241,8 +273,8 @@ classdef ParImageStack
     end
     
     methods % operator and builtin function overloading 
-        function sz = size(s)
-            sz = [s.imageSize s.nChannels, s.nFrames];
+        function sz = size(s, varargin)
+            sz = size(s.data, varargin{:});
         end
         
         function ind = end(s,k,n)
@@ -315,7 +347,7 @@ classdef ParImageStack
     end
     
     methods % Visualization methods
-        function setColormap(s)
+        function setColormap(s) %#ok<MANU>
             colormap(ParImageStack.getDefaultColormap());
         end
         
@@ -438,7 +470,7 @@ classdef ParImageStack
             nFrames = s.nFrames;
             [s, minmax] = s.normalize();
             debug('Saving info in info.mat\n');
-            info.minmax = minmax;
+            info.minmax = minmax; %#ok<STRNU>
             save('info.mat', 'info');
 
             data = s.data;
@@ -450,21 +482,74 @@ classdef ParImageStack
                 fname = fullfile(imgDir, sprintf('%s%05d.tif', prefix, i));
                 scaled = uint16(data(:, :, :, i) * (2^16-1));
                 imwrite(scaled, fname, 'Compression', compression);
-                prog.update(i);
+                prog.update(i); %#ok<PFBNS>
             end
 
         end
     end
         
     methods(Static)
+        function s = fromFileFullPathList(fileList, varargin)
+            % load images with fully specified paths
+            p = inputParser();
+            p.addParameter('name', '', @ischar);
+            p.addParameter('cropX', [], @isvector);
+            p.addParameter('cropY', [], @isvector);
+            p.KeepUnmatched = true;
+            p.parse(varargin{:});
+            
+            nFiles = numel(fileList);
+            
+            % figure out cropping masks
+            img = imread(fileList{1});
+            [useRegion, cropX, cropY, szImg] = ParImageStack.determinePixelRegion(p.Results.cropX, p.Results.cropY, size(img));
+            
+            debug('Allocating memory for images...this may take some time\n');
+            stack = zeros([szImg, 1, nFiles], 'like', img);
+                
+            prog = ProgressBar(nFiles, 'Loading %d images', nFiles);
+            %prog.enableParallel();
+            for i = 1:nFiles
+                file = fileList{i};
+                if useRegion
+                    img = imread(file, 'PixelRegion', {cropX, cropY});
+                else
+                    img = imread(file);
+                end
+%                 if ~isfloat(img)
+%                 	img = single(img);
+%                 end
+                stack(:, :, :, i) = img;
+                prog.update(i);
+            end
+            prog.finish();
+            
+            if isempty(p.Results.name)
+                % use leaf of directory name
+                [~, name] = fileparts(fileList{1});
+            else
+                name = p.Results.name;
+            end
+            
+            s = ParImageStack(stack, 'name', name, p.Unmatched);
+        end
+        
+        function s = fromFileListInDirectory(fileList, directory, varargin)
+            directory = GetFullPath(directory);
+            for iF = 1:numel(fileList)
+                fileList{iF} = fullfile(directory, fileList{iF});
+            end
+            
+            [~, name] = fileparts(directory);
+            s = ParImageStack.fromFileFullPathList(fileList, 'name', name, varargin{:});
+        end
+        
         function s = fromAllInDirectory(imgDir, varargin)
             % loads all images within directory and returns a nX x nY x nImg single
             % tensor of image data
 
             p = inputParser();
-            p.addParameter('name', '', @ischar);
-            p.addParameter('cropX', [], @isvector);
-            p.addParameter('cropY', [], @isvector);
+            p.addParameter('includeSubfolders', false, @islogical);
             p.KeepUnmatched = true;
             p.parse(varargin{:});
 
@@ -475,41 +560,11 @@ classdef ParImageStack
             
             % load the images using data store
             debug('Searching for file names\n')
-            ds = datastore(imgDir, 'IncludeSubfolders', true, 'FileExtensions', '.tif','Type', 'image');
-            nFiles = length(ds.Files);
+            ds = datastore(imgDir, 'IncludeSubfolders', p.Results.includeSubfolders, 'FileExtensions', '.tif','Type', 'image');
             
-            % figure out cropping masks
-            img = ds.readimage(1);
-            [useRegion, cropX, cropY, szImg] = ParImageStack.determinePixelRegion(p.Results.cropX, p.Results.cropY, size(img));
+            [~, name] = fileparts(imgDir);
             
-            debug('Allocating memory for images...this may take some time\n');
-            stack = zeros([szImg, 1, nFiles], 'like', img);
-                
-            prog = ProgressBar(nFiles, 'Loading %d images in %s...', nFiles, imgDir);
-            prog.enableParallel();
-            parfor i = 1:nFiles
-                prog.update(i);
-                file = ds.Files{i};
-                if useRegion
-                    img = imread(file, 'PixelRegion', {cropX, cropY});
-                else
-                    img = imread(file);
-                end
-%                 if ~isfloat(img)
-%                 	img = single(img);
-%                 end
-                stack(:, :, :, i) = img;
-            end
-            prog.finish();
-            
-            if isempty(p.Results.name)
-                % use leaf of directory name
-                [~, name] = fileparts(imgDir);
-            else
-                name = p.Results.name;
-            end
-            
-            s = ParImageStack(stack, 'name', name, p.Unmatched);
+            s = ParImageStack.fromFileFullPathList(ds.Files, 'name', name, p.Unmatched);
         end
         
         function s = fromTif(imgFile, varargin)
