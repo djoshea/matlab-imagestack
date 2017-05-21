@@ -447,6 +447,16 @@ classdef ParImageStack
         function saveVideo(s, file, varargin)
             s.assertMonoOrRGB();
             
+            [path, leaf, ext] = fileparts(file);
+            if isempty(ext)
+                folder = file;
+                file = fullfile(folder, 'video.avi');
+            else
+                folder = path;
+            end
+            
+            mkdirRecursive(folder);
+            
             vObj = VideoWriter(GetFullPath(file));
             vObj.FrameRate = s.frameRate;
             
@@ -544,13 +554,19 @@ classdef ParImageStack
             s = ParImageStack.fromFileFullPathList(fileList, 'name', name, varargin{:});
         end
         
-        function s = fromAllInDirectory(imgDir, varargin)
+        function s = fromAllInDirectoryMatching(imgDir, match, varargin)
+            % imgDir is rootpath, match is like '*.tif';
+            match = fullfile(imgDir, match);
+            matches = dir(match);
+            files = {matches.name}';
+            
+            s = ParImageStack.fromFileListInDirectory(files, imgDir);
+        end
+        
+        function s = fromAllInDirectoryRecursive(imgDir, varargin)
             % loads all images within directory and returns a nX x nY x nImg single
             % tensor of image data
 
-            p = inputParser();
-            p.addParameter('includeSubfolders', false, @islogical);
-            p.KeepUnmatched = true;
             p.parse(varargin{:});
 
             imgDir = GetFullPath(imgDir);
@@ -560,7 +576,7 @@ classdef ParImageStack
             
             % load the images using data store
             debug('Searching for file names\n')
-            ds = datastore(imgDir, 'IncludeSubfolders', p.Results.includeSubfolders, 'FileExtensions', '.tif','Type', 'image');
+            ds = datastore(imgDir, 'IncludeSubfolders', true, 'FileExtensions', '.tif','Type', 'image');
             
             [~, name] = fileparts(imgDir);
             
