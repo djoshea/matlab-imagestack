@@ -62,6 +62,8 @@ classdef ImageStack
         frameRate = 10;
         
         name = ''
+        
+        metaByFrame % nFrames x 1 struct which will automatically be sliced with the datas
     end
     
     properties(Dependent)
@@ -83,10 +85,17 @@ classdef ImageStack
             p = inputParser();
             p.addParameter('name', '', @ischar);
             p.addParameter('frameRate', 10, @isscalar);
+            p.addParameter('metaByFrame', [], @(x) isempty(x) || isstruct(x));
             p.parse(varargin{:});
             
             s.frameRate = s.frameRate;
             s.name = p.Results.name;
+            if ~isempty(p.Results.metaByFrame)
+                assert(numel(p.Results.metaByFrame) == s.nFrames, 'Meta by frame length must match nFrames');
+                s.metaByFrame = makecol(p.Results.metaByFrame);
+            else
+                s.metaByFrame = emptyStructArray(s.nFrames);
+            end
         end
     end
     
@@ -169,10 +178,13 @@ classdef ImageStack
         % as new ImageStack
         function s = frames(s, idx)
             s.data = s.data(:, :, :, idx);
+            if ~isempty(s.metaByFrame)
+                s.metaByFrame = s.metaByFrame(idx);
+            end
         end
         
         function s = everyNthFrame(s, skip)
-            s.data = s.data(:, :, :, 1:skip:end);
+            s.data = s.frames(1:skip:s.nFrames);
         end
         
         function s = channels(s, idx)

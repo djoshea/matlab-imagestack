@@ -1,10 +1,10 @@
 classdef ParImageStack
 % Wrapper around a 4-D tensor of image data:
-% X by Y by channels by frames
+% img1 x img 2 x channels x frames
 % 2015 Dan O'Shea
 %
 % Properties
-%   .data - underlying data
+%   .data - underlying data [Y by X by channels by frames]
 %   .name - string
 %   .frameRate - used for tvec, play, and saveVideo
 % 
@@ -25,12 +25,12 @@ classdef ParImageStack
 %
 % Return a new ParImageStack:
 %   s = s.frames(select) - get ParImageStack with selected frames
-%   s = s.everyNthFrame(skip) - get 1:skip:end frames
+%   s = s.withEveryNthFrame(skip) - get 1:skip:end frames
 %   s = s.channels(select) - get ParImageStack with selected frames
 %   s = s.crop(selectX, selectY)
-%
+%   s = s.minProject, meanProject, maxProject, stdProject
 % Stats:
-%   s.minProj, s.maxProj, s.meanProj
+%   s.minOverTime, s.maxOverTime, s.meanOverTime
 %   s.globalMin, s.globalMax, s.globalMinMax
 %
 % Many stats functions are supported directly and act on s.data
@@ -54,7 +54,7 @@ classdef ParImageStack
 %   s.montage
 %
 % Chaining: any method that returns an image stack can be chained, e.g.
-%   s.everyNthFrame(50).normalize.montage
+%   s.withEveryNthFrame(50).normalize.montage
 
     properties
         data
@@ -62,6 +62,8 @@ classdef ParImageStack
         frameRate = 10;
         
         name = ''
+        
+        metaByFrame % nFrames x 1 struct which will automatically be sliced with the data
     end
     
     properties(Dependent)
@@ -83,10 +85,17 @@ classdef ParImageStack
             p = inputParser();
             p.addParameter('name', '', @ischar);
             p.addParameter('frameRate', 10, @isscalar);
+            p.addParameter('metaByFrame', [], @(x) isempty(x) || isstruct(x));
             p.parse(varargin{:});
             
             s.frameRate = s.frameRate;
             s.name = p.Results.name;
+            if ~isempty(p.Results.metaByFrame)
+                assert(numel(p.Results.metaByFrame) == s.nFrames, 'Meta by frame length must match nFrames');
+                s.metaByFrame = makecol(p.Results.metaByFrame);
+            else
+                s.metaByFrame = emptyStructArray(s.nFrames);
+            end
         end
     end
     
@@ -95,7 +104,7 @@ classdef ParImageStack
             tvec = (0 : (1/s.frameRate) : ((s.nFrames-1)/s.frameRate))';
         end
             
-        function img = meanProj(s)
+        function img = meanOverTime(s)
             img = mean(s.data, 4);
         end
         
@@ -143,11 +152,11 @@ classdef ParImageStack
             m = nanmax(s.data, varargin{:});
         end
         
-        function img = minProj(s)
+        function img = minOverTime(s)
             img = min(s.data, [], 4);
         end
         
-        function img = maxProj(s) 
+        function img = maxOverTime(s) 
             img = max(s.data, [], 4);
         end
         
@@ -161,18 +170,24 @@ classdef ParImageStack
     end
     
     methods % Access to data
-        
         function d = getFrames(s, idx)
             d = s.data(:, :, :, idx);
+        end
+        
+        function d = getChannels(s, idx)
+            d = s.data(:, :, idx, :);
         end
         
         % as new ParImageStack
         function s = frames(s, idx)
             s.data = s.data(:, :, :, idx);
+            if ~isempty(s.metaByFrame)
+                s.metaByFrame = s.metaByFrame(idx);
+            end
         end
         
-        function s = everyNthFrame(s, skip)
-            s.data = s.data(:, :, :, 1:skip:end);
+        function s = withEveryNthFrame(s, skip)
+            s = s.frames(1:skip:s.nFrames);
         end
         
         function s = channels(s, idx)
@@ -205,12 +220,32 @@ classdef ParImageStack
         end
         
         function s = alignToMeanTranslation(s)
-            s = s.alignToReferenceTranslation(s.meanProj);
+            s = s.alignToReferenceTranslation(s.meanOverTime);
         end
         
         function [s, minmax] = normalize(s)
             minmax = s.globalMinMax;
             s.data = (s.data - minmax(1)) / (minmax(2) - minmax(1)); %#ok<*PROP>
+        end
+        
+        function s = dfof(s)
+            s.data = s.data ./ nanmean(s.data, 4);
+        end
+        
+        function s = meanProject(s)
+            s.data = nanmean(s.data, 4);
+        end
+        
+        function s = maxProject(s)
+            s.data = nanmax(s.data, 4);
+        end
+        
+        function s = minProject(s)
+            s.data = nanmin(s.data, 4);
+        end
+        
+        function s = stdProject(s)
+            s.data = nanstd(s.data, [], 4);
         end
         
         function s = applyBinaryFn(s, fn, o)
@@ -302,6 +337,10 @@ classdef ParImageStack
             s = s.applyBinaryFn(@times, o);
         end
         
+        function s = logStack(s)
+            s.data = log(s.data);
+        end
+        
         function s = cat(dim, varargin)
             dataCell = cellfun(@(x) x.data, varargin, 'UniformOutput', false);
             s = varargin{1};
@@ -342,8 +381,6 @@ classdef ParImageStack
                 [varargout{1:nargout}] = builtin('subsref', s, subs);
             end
         end
-        
-        
     end
     
     methods % Visualization methods
@@ -408,14 +445,24 @@ classdef ParImageStack
             end
         end
         
-        function show(s)
+        function show(s, idx)
             if nargin < 2
                 idx = 1;
             end
-            imagesc(s.getFrames(1));
-            
-            h = title(sprintf('%s Frame %d', s.name, idx(1)));
+            imagesc(s.getFrames(idx));
+            axis equal; axis tight;
+            h = title(s.name);
             h.Interpreter = 'none';
+        end
+        
+        function h = roiBox(s, rlims, clims, varargin)
+            rlims = [min(rlims(:)), max(rlims(:))];
+            clims = [min(clims(:)), max(clims(:))];
+            
+            w = diff(clims);
+            h = diff(rlims);
+           
+            h = rectangle('Position', [clims(1) rlims(1) w h], 'EdgeColor', 'r', 'LineWidth', 4, varargin{:});
         end
         
         function play(s)
@@ -424,7 +471,7 @@ classdef ParImageStack
         end
         
         function montage(s, varargin)
-            montage(s.data);
+            montage(s.normalize.data);
             s.setColormap();
         end
     end
@@ -558,7 +605,7 @@ classdef ParImageStack
             % imgDir is rootpath, match is like '*.tif';
             match = fullfile(imgDir, match);
             matches = dir(match);
-            files = {matches.name}';
+            files = c
             
             s = ParImageStack.fromFileListInDirectory(files, imgDir);
         end
