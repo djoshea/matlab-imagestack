@@ -206,12 +206,8 @@ classdef ParImageStack
             prog.enableParallel();
             data = s.data;
             nFrames = size(data, 4);
-           % ffRef = fft2(reference);
             shifts = nan(nFrames, 2);
             parfor i = 1:nFrames
-                %[out, freg] = ParImageStackTools.dftregistration(fft2(data(:, :, :, i)), ffRef, 4);
-                %shifts(i, :) = out(3:4);
-                %data(:, :, :, i) = abs(ifft2(freg));
                 data(:, :, :, i) = imregister(data(:, :, :, i), reference, 'translation', optimizer, metric);
                 prog.update(i); %#ok<PFBNS>
             end
@@ -219,8 +215,32 @@ classdef ParImageStack
             prog.finish();
         end
         
+        function [s, shifts] = alignToReferenceTranslationViaFFT(s, reference)
+            %[optimizer, metric] = imregconfig('monomodal');
+            prog = ProgressBar(s.nFrames, 'Aligning images...');
+            prog.enableParallel();
+            data = s.data;
+            nFrames = size(data, 4);
+            if isa(reference, 'ParImageStack')
+                reference = reference.getFrames(1);
+            end
+            ffRef = fft2(reference);
+            shifts = nan(nFrames, 2);
+            parfor i = 1:nFrames
+                [out, freg] = ParImageStackTools.dftregistration(fft2(data(:, :, :, i)), ffRef, 4);
+                shifts(i, :) = out(3:4);
+                data(:, :, :, i) = abs(ifft2(freg));
+                %data(:, :, :, i) = imregister(data(:, :, :, i), reference, 'translation', optimizer, metric);
+                prog.update(i); %#ok<PFBNS>
+            end
+            s.data = data;
+            prog.finish();
+        end
+        
         function s = alignToMeanTranslation(s)
-            s = s.alignToReferenceTranslation(s.meanOverTime);
+            n = min(20, s.nFrames);
+            ref = mean(s.data(:, :, :, 1:n), 4);
+            s = s.alignToReferenceTranslation(ref);
         end
         
         function [s, minmax] = normalize(s)
@@ -337,7 +357,7 @@ classdef ParImageStack
             s = s.applyBinaryFn(@times, o);
         end
         
-        function s = logStack(s)
+        function s = log(s)
             s.data = log(s.data);
         end
         
@@ -494,6 +514,8 @@ classdef ParImageStack
         function saveVideo(s, file, varargin)
             s.assertMonoOrRGB();
             
+            s = s.normalize();
+            
             [path, leaf, ext] = fileparts(file);
             if isempty(ext)
                 folder = file;
@@ -502,7 +524,9 @@ classdef ParImageStack
                 folder = path;
             end
             
-            mkdirRecursive(folder);
+            if ~isempty(folder)
+                mkdirRecursive(folder);
+            end
             
             vObj = VideoWriter(GetFullPath(file));
             vObj.FrameRate = s.frameRate;
